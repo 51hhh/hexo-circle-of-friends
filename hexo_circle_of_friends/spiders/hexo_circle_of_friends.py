@@ -18,13 +18,17 @@ logger = get_logger(__name__)
 # post_parsers = ["theme_butterfly_parse"]
 # 文章页解析器
 post_parsers = [
-    "post_feed_parse", "theme_butterfly_parse", "theme_fluid_parse", "theme_matery_parse", "theme_sakura_parse",
+    "post_feed_parse", "feed_discover_parse",
+    "theme_butterfly_parse", "theme_fluid_parse", "theme_matery_parse", "theme_sakura_parse",
     "theme_volantis_parse", "theme_nexmoe_parse", "theme_next_parse", "theme_stun_parse", "theme_stellar_parse",
 ]
 # 默认feed后缀
 feed_suffix = [
     "atom.xml", "feed/atom", "rss.xml", "rss2.xml", "feed", "index.xml"
 ]
+# feed_discover_parse 认的 MIME，同时也是优先级顺序（一个站常把同样的内容
+# 用 atom/rss20/rss10 各发一份，只取一份，否则同一篇文章会被插入多次）
+FEED_MIMES = ["application/atom+xml", "application/rss+xml", "application/rdf+xml"]
 
 
 class CRequest(Request):
@@ -239,6 +243,37 @@ class FriendpageLinkSpider(scrapy.Spider):
                 )
         except:
             pass
+
+    def feed_discover_parse(self, response):
+        # 从首页 <link rel="alternate"> 里读站点自己声明的 feed 地址。
+        #
+        # feed_suffix 那套固定后缀只覆盖 Hexo 这一类"feed 在站点根下"的站；
+        # Typecho / WordPress 常把 feed 放在 /index.php/feed/ 之类猜不到的路径上，
+        # 但它们都会在 head 里把真实地址声明出来。少了这一步，这些站会被判成失联。
+        friend = response.meta.get("friend")
+        if not friend:
+            return
+        base = friend[1]
+        # 固定后缀已经请求过的地址不再重复请求：大多数 Hexo 站声明的正是 /atom.xml，
+        # 重复请求会让同一篇文章被 post_feed_parse 插入两次。
+        tried = {base + suffix for suffix in feed_suffix}
+        tried.update({base, response.url})
+        found = {}
+        for sel in response.css("link"):
+            rel = (sel.attrib.get("rel") or "").lower().split()
+            mime = (sel.attrib.get("type") or "").lower().strip()
+            href = sel.attrib.get("href")
+            if "alternate" not in rel or mime not in FEED_MIMES or not href:
+                continue
+            url = response.urljoin(href)
+            if url not in tried:
+                found.setdefault(mime, url)
+        for mime in FEED_MIMES:
+            if mime in found:
+                logger.info("%s：从 head 发现 feed %s" % (friend[0], found[mime]))
+                yield CRequest(found[mime], self.post_feed_parse, response.meta,
+                               errback=self.errback_handler)
+                return
 
     def theme_butterfly_parse(self, response):
         # print("theme_butterfly_parse---------->" + response.url)
