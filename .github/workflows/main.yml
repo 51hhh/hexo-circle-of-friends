@@ -47,6 +47,12 @@ jobs:
     - name: Install requirements
       working-directory: ./hexo_circle_of_friends
       run: |
+        # setup-python 会把 pip 升到 25.x，而 pip >= 24.1 把"依赖元数据不合规"
+        # 从"跳过并警告"改成了硬失败。本仓库的 requirements.txt 是 2022 年钉死的，
+        # 里面有 uvicorn==0.14.0 这类老 wheel（元数据写了非法的 click (>=7.*)），
+        # 于是整份安装在 pip 25.0.1 下必然失败。
+        # 回到 pip 23.0.1 能让这 66 行依赖完整解析通过（已在 python:3.8 容器里实测）。
+        python -m pip install "pip==23.0.1"
         pip install -r requirements.txt
 
     - name: set env
