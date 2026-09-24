@@ -255,9 +255,15 @@ class FriendpageLinkSpider(scrapy.Spider):
             return
         base = friend[1]
         # 固定后缀已经请求过的地址不再重复请求：大多数 Hexo 站声明的正是 /atom.xml，
-        # 重复请求会让同一篇文章被 post_feed_parse 插入两次。
-        tried = {base + suffix for suffix in feed_suffix}
-        tried.update({base, response.url})
+        # 重复请求会让同一篇文章被 post_feed_parse 插入两次（管道只跟上一轮的快照
+        # 去重，同一轮内不去重）。
+        #
+        # 比对前统一去掉尾斜杠：WordPress 声明的是 ".../feed/"，而 feed_suffix 猜的是
+        # ".../feed"，两者内容相同但字符串不等，不归一化就正好漏过去。
+        # 仍然挡不住 "/?feed=rss2" 这类 query 形式的等价地址——那种只能靠管道层
+        # 按 link 去重兜底，这里不做。
+        tried = {(base + suffix).rstrip("/") for suffix in feed_suffix}
+        tried.update({base.rstrip("/"), response.url.rstrip("/")})
         found = {}
         for sel in response.css("link"):
             rel = (sel.attrib.get("rel") or "").lower().split()
@@ -266,7 +272,7 @@ class FriendpageLinkSpider(scrapy.Spider):
             if "alternate" not in rel or mime not in FEED_MIMES or not href:
                 continue
             url = response.urljoin(href)
-            if url not in tried:
+            if url.rstrip("/") not in tried:
                 found.setdefault(mime, url)
         for mime in FEED_MIMES:
             if mime in found:
